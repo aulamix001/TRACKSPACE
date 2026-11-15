@@ -2,10 +2,11 @@
 # prefix containing bin/x86_64-w64-mingw32-g++-posix and x86_64-w64-mingw32.
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
-if(NOT DEFINED ENV{TRACKSPACE_MINGW_ROOT})
+set(TRACKSPACE_MINGW_ROOT "$ENV{TRACKSPACE_MINGW_ROOT}" CACHE PATH "MinGW installation prefix")
+if(NOT TRACKSPACE_MINGW_ROOT)
     message(FATAL_ERROR "Set TRACKSPACE_MINGW_ROOT to the MinGW installation prefix")
 endif()
-set(_root "$ENV{TRACKSPACE_MINGW_ROOT}")
+set(_root "${TRACKSPACE_MINGW_ROOT}")
 set(CMAKE_C_COMPILER "${_root}/bin/x86_64-w64-mingw32-gcc-posix")
 set(CMAKE_CXX_COMPILER "${_root}/bin/x86_64-w64-mingw32-g++-posix")
 set(CMAKE_RC_COMPILER "${_root}/bin/x86_64-w64-mingw32-windres")

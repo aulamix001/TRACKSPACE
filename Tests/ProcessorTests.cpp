@@ -7,6 +7,7 @@ int main(int argc, char** argv) {
     auto check = [&failures](bool ok, const char* name) { std::cout << (ok ? "PASS " : "FAIL ") << name << '\n'; failures += !ok; };
     TrackspaceProcessor p;
     check(p.getTotalNumOutputChannels() == 2, "Stereo output bus");
+    check(p.getBus(true, 1)->isEnabled(), "Auxiliary stereo sidechain enabled by default");
     auto layout = p.getBusesLayout(); layout.inputBuses.set(1, juce::AudioChannelSet::stereo());
     check(p.setBusesLayout(layout), "Host can enable stereo external sidechain");
     p.prepareToPlay(48000, 512);
@@ -23,7 +24,32 @@ int main(int argc, char** argv) {
         if (block > 80) for (int n = 0; n < 512; ++n) outputPower += buffer.getSample(0, n) * buffer.getSample(0, n);
     }
     check(outputPower < inputPower * .2, "Host aux bus drives spectral reduction");
+    p.prepareToPlay(48000, 1025); buffer.setSize(4, 1025); buffer.clear();
+    for (int n = 0; n < 1025; ++n) {
+        buffer.setSample(2, n, .25f * std::sin(n * .13f));
+        buffer.setSample(3, n, .37f * std::sin(n * .19f));
+    }
+    juce::AudioBuffer<float> auxiliaryCopy(buffer);
+    p.processBlock(buffer, midi);
+    check(buffer.getMagnitude(0, 0, 1025) == 0 && buffer.getMagnitude(1, 0, 1025) == 0,
+        "Auxiliary channels do not leak into silent main output across 256-sample chunks");
+    check(std::equal(buffer.getReadPointer(2), buffer.getReadPointer(2) + 1025, auxiliaryCopy.getReadPointer(2))
+        && std::equal(buffer.getReadPointer(3), buffer.getReadPointer(3) + 1025, auxiliaryCopy.getReadPointer(3)),
+        "Both auxiliary input channels remain read-only");
+    TrackspaceProcessor disconnected;
+    auto noSide = disconnected.getBusesLayout(); noSide.inputBuses.set(1, juce::AudioChannelSet::disabled());
+    check(disconnected.setBusesLayout(noSide), "Host can disable auxiliary bus");
+    disconnected.prepareToPlay(48000, 1025);
+    buffer.setSize(2, 1025);
+    for (int c = 0; c < 2; ++c) for (int n = 0; n < 1025; ++n) buffer.setSample(c, n, .5f * std::sin(n * .2f));
+    juce::AudioBuffer<float> dryCopy(buffer);
+    disconnected.processBlock(buffer, midi);
+    check(std::equal(buffer.getReadPointer(0), buffer.getReadPointer(0) + 1025, dryCopy.getReadPointer(0))
+        && std::equal(buffer.getReadPointer(1), buffer.getReadPointer(1) + 1025, dryCopy.getReadPointer(1)),
+        "Disabled SC does not fall back to processing loud main audio");
     check(p.getParameters().size() == 11, "All eleven controls exposed for host automation");
+    check(p.parameters.getParameter("attack")->getText(0, 32).contains("0.001"),
+        "DAW displays the minimum attack accurately instead of rounding it to zero");
     auto* amount = p.parameters.getParameter("amount"); amount->setValueNotifyingHost(.73f);
     p.editorSize.store(400); p.advancedPanel.store(true);
     juce::MemoryBlock state; p.getStateInformation(state);

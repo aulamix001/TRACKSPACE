@@ -11,7 +11,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackspaceProcessor::makePar
             juce::AudioParameterFloatAttributes().withLabel(unit)
                 .withStringFromValueFunction([unit](float v, int) {
                     if (juce::String(unit) == "Hz" && v >= 1000) return juce::String(v / 1000, 2) + " kHz";
-                    return juce::String(v, v < 10 ? 2 : 1) + " " + unit;
+                    const auto precision = juce::String(unit) == "ms" && v < .01f ? 3 : v < 10 ? 2 : 1;
+                    return juce::String(v, precision) + " " + unit;
                 }).withValueFromStringFunction([](const juce::String& text) {
                     auto v = text.getFloatValue();
                     return text.containsIgnoreCase("k") ? v * 1000 : v;
@@ -20,7 +21,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackspaceProcessor::makePar
     add("amount", "Amount", 0, 100, 50, 50, "%");
     add("lowCut", "Low-cut", 20, 20000, 20, 632.4555f, "Hz");
     add("highCut", "High-cut", 20, 20000, 20000, 632.4555f, "Hz");
-    add("attack", "Attack", .01f, 100, 10, 1, "ms");
+    add("attack", "Attack", .001f, 100, 2, 1, "ms");
     add("release", "Release", .01f, 1000, 100, 10, "ms");
     add("pan", "Pan / Mid-Side balance", -1, 1, 0, 0, "");
     p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"mode", 1}, "Processing mode", juce::StringArray{"L/R", "M/S"}, 0));
@@ -32,7 +33,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout TrackspaceProcessor::makePar
 }
 TrackspaceProcessor::TrackspaceProcessor()
     : AudioProcessor(BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
-          .withInput("Sidechain", juce::AudioChannelSet::stereo(), false)
+          .withInput("Sidechain", juce::AudioChannelSet::stereo(), true)
           .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       parameters(*this, nullptr, "TRACKSPACE_STATE", makeParameters()) {
     constexpr const char* ids[]{"amount", "lowCut", "highCut", "attack", "release", "pan", "mode", "freeze", "listen", "bypass", "delta"};

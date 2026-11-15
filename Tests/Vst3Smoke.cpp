@@ -35,6 +35,10 @@ int main(int argc, char** argv) {
         require(component && component->initialize(nullptr) == kResultOk, "VST3 component instantiated and initialized");
         require(component->getBusCount(kAudio, kInput) == 2 && component->getBusCount(kAudio, kOutput) == 1,
             "Main input, external sidechain and main output exported");
+        BusInfo auxInfo{};
+        require(component->getBusInfo(kAudio, kInput, 1, auxInfo) == kResultOk
+            && auxInfo.busType == kAux && (auxInfo.flags & BusInfo::kDefaultActive),
+            "Actual VST3 exports an auxiliary bus enabled by default");
         IAudioProcessor* audio = nullptr;
         require(component->queryInterface(IAudioProcessor::iid, reinterpret_cast<void**>(&audio)) == kResultOk, "Audio processor interface");
         std::array<SpeakerArrangement, 2> arrangements{SpeakerArr::kStereo, SpeakerArr::kStereo};
@@ -55,20 +59,26 @@ int main(int argc, char** argv) {
         AudioBusBuffers outputs; outputs.numChannels = 2; outputs.channelBuffers32 = output;
         ProcessData data; data.processMode = kRealtime; data.symbolicSampleSize = kSample32;
         data.numSamples = 512; data.numInputs = 2; data.numOutputs = 1; data.inputs = inputs.data(); data.outputs = &outputs;
-        double dryPower = 0, wetPower = 0;
-        for (int block = 0; block < 200; ++block) {
+        double dryPower = 0;
+        std::array<double, 3> wetPower{};
+        for (int block = 0; block < 400; ++block) {
             for (int n = 0; n < 512; ++n) {
                 const auto v = .3f * static_cast<float>(std::sin(6.283185307179586 * 1000 * (block * 512 + n) / 48000));
-                inL[n] = inR[n] = v; scL[n] = scR[n] = block >= 100 ? v : 0;
+                inL[n] = inR[n] = v;
+                scL[n] = (block >= 100 && block < 200) || block >= 300 ? v : 0;
+                scR[n] = block >= 300 ? -v : block >= 200 ? v : 0;
             }
             if (audio->process(data) != kResultOk) require(false, "VST3 process block");
             for (int n = 0; n < 512; ++n) {
                 if (!std::isfinite(outL[n]) || !std::isfinite(outR[n])) require(false, "Output is finite");
                 if (block >= 80 && block < 100) dryPower += outL[n] * outL[n];
-                if (block >= 180) wetPower += outL[n] * outL[n];
+                if (block >= 100 && block % 100 >= 80)
+                    wetPower[static_cast<size_t>(block / 100 - 1)] += outL[n] * outL[n];
             }
         }
-        require(dryPower > 100 && wetPower < dryPower * .2, "Binary reduces overlapping frequencies when external sidechain is fed");
+        require(dryPower > 100 && wetPower[0] < dryPower * .2, "VST3 left-only SC drives linked reduction");
+        require(wetPower[1] < dryPower * .2, "VST3 right-only SC drives linked reduction");
+        require(wetPower[2] < dryPower * .2, "VST3 anti-phase SC does not cancel the detector");
         require(audio->getLatencySamples() == 0, "VST3 latency is zero");
         audio->setProcessing(false); component->setActive(false); audio->release();
         component->terminate(); component->release(); factory->release();

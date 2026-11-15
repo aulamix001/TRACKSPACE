@@ -7,7 +7,7 @@ namespace trackspace {
 constexpr int bandCount = 32;
 struct Settings {
     float amount = 50.0f, lowCut = 20.0f, highCut = 20000.0f;
-    float attackMs = 10.0f, releaseMs = 100.0f, pan = 0.0f;
+    float attackMs = 2.0f, releaseMs = 100.0f, pan = 0.0f;
     bool midSide = false, freeze = false, listen = false, bypass = false;
 };
 
@@ -42,7 +42,8 @@ private:
     };
     std::array<Band, bandCount> bands;
     std::array<float, bandCount> frequencies{};
-    std::array<Biquad, 2> listenHP, listenLP;
+    // Applied to the auxiliary input only, before spectral detection and listen.
+    std::array<Biquad, 2> sidechainHP, sidechainLP;
     double rate = 48000;
     float amount = 0, mode = 0, bypassMix = 0, listenMix = 0;
     float oldLow = -1, oldHigh = -1;

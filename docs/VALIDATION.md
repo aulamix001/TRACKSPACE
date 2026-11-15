@@ -1,6 +1,6 @@
 # Validacao executada
 
-Build: TRACKSPACE 0.1.0, Windows x64 VST3, JUCE 7.0.12
+Build: TRACKSPACE 0.2.0, Windows x64 VST3, JUCE 7.0.12
 (`4f43011b96eb0636104cb3e433894cda98243626`).
 Compilacao cruzada com GCC/MinGW-w64 14-posix, Release, runtimes estaticos.
 Os testes Windows foram executados em Wine 10 / Xvfb sobre Linux, nao no Studio One.
@@ -11,19 +11,38 @@ Os testes Windows foram executados em Wine 10 / Xvfb sobre Linux, nao no Studio 
 
 | Suite | Evidencia |
 |---|---|
-| `spectral_audio_tests` | 36 verificacoes: ausencia de sidechain, Amount zero, frequencias coincidentes/distantes, regiao dos filtros, L/R, M/S, Freeze, Release, Bypass, escuta do sidechain, faixa invertida, valores nao finitos e independencia do tamanho do buffer |
-| `host_processor_tests` | 16 verificacoes: buses auxiliares, processamento via entrada auxiliar, 11 parametros publicados, estado de automacao, tamanho e painel salvos, mono, estado invalido, renderizacao e interacao com o controle Amount e alternancia de painel |
-| `vst3_binary_load_and_audio` | Abriu o arquivo VST3 Windows com LoadLibrary, chamou InitDll/GetPluginFactory, instanciou IComponent/IAudioProcessor, negociou buses stereo, processou 200 blocos de 512 amostras, verificou saidas finitas, reducao com sidechain, latencia declarada e encerramento |
+| `spectral_audio_tests` | 46 verificacoes: ausencia de sidechain, Amount zero, frequencias coincidentes/distantes, regiao dos filtros, L/R, M/S, Freeze, Release, Bypass, escuta do sidechain, faixa invertida, valores nao finitos e independencia do tamanho do buffer |
+| `host_processor_tests` | 22 verificacoes: buses auxiliares, processamento via entrada auxiliar, 11 parametros publicados, estado de automacao, tamanho e painel salvos, mono, estado invalido, renderizacao e interacao com o controle Amount e alternancia de painel |
+| `vst3_binary_load_and_audio` | Abriu o arquivo VST3 Windows com LoadLibrary, chamou InitDll/GetPluginFactory, instanciou IComponent/IAudioProcessor, negociou buses stereo, processou 400 blocos de 512 amostras, verificou saidas finitas, reducao com sidechain, latencia declarada e encerramento |
 
-O motor tambem passou nas 36 verificacoes compilado nativamente em Linux.
-Uma compilacao auxiliar do processador com JUCE 8.0.6 em Linux passou nas 16
-verificacoes e gerou imagens da interface. O artefato Windows entregue utiliza JUCE 7.0.12.
+O motor tambem passou nas 46 verificacoes compilado nativamente em Linux.
+Os 22 testes de integracao do processador foram executados no binario Windows.
+O artefato Windows entregue utiliza JUCE 7.0.12.
 
 As quatro taxas testadas no motor foram 44100, 48000, 96000 e 192000 Hz.
-Buffers de 1, 127, 257, 512 e 1024 amostras foram usados conforme o teste.
+Buffers de 1, 127, 257, 512, 1024 e 1025 amostras foram usados conforme o teste.
 
 Os hashes SHA-256 dos dois arquivos de imagem originais coincidem com os
 respectivos arquivos incorporados no plugin. Nenhum original foi editado.
+
+## Auditoria do detector e sidechain (0.2.0)
+
+- Entrada auxiliar stereo habilitada por padrao e confirmada como `kAux` / `kDefaultActive` no arquivo VST3 carregado.
+- Buses lidos por `getBusBuffer(buffer, true, 1)`; processamento aplicado somente a `getBusBuffer(buffer, false, 0)`.
+- Picos L/R vinculados por `max(abs(L), abs(R))` apos os filtros espectrais e antes do envelope.
+- O teste com sinais em quadratura distingue esse vinculo do maximo de dois envelopes suavizados separadamente.
+- HPF/LPF de Low-cut/High-cut alimentam o detector e a escuta, sem filtrar o audio principal.
+- Testes comprovam auxiliar sem vazamento para a saida principal e sem modificacao de seus buffers de entrada em blocos de 1025 amostras.
+- Curva de intensidade mais firme, sensibilidade ampliada a picos abaixo de -72 dBFS e limite por banda de 36 dB.
+- Ataque minimo de 0,001 ms, padrao de 2 ms; coeficientes atualizados a cada 4 amostras.
+- Um burst de 4 kHz gerou alvo de reducao por banda de aproximadamente 36 dB com ataque minimo versus 11,31 dB com ataque de 100 ms, medido apos 0,5 ms. Esses valores sao do controle de ganho, nao uma promessa de atenuacao instantanea do audio.
+- A carga real do VST3 foi testada com sidechain so em L, so em R e em oposicao de fase; todos provocaram reducao.
+
+Controle negativo: os testes novos foram executados contra o motor anterior
+(commit `25421d1`), que falhou em quatro casos: vinculo antes da suavizacao,
+HPF no detector, LPF no detector e sensibilidade a sinais baixos.
+O codigo corrigido passou em todos os 46 casos. O DSP continua sendo um redutor
+espectral independente; nao foi adicionado um modelo fisico de compressor Vari-Mu.
 
 ## Reproducao da compilacao cruzada
 

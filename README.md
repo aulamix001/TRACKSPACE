@@ -2,6 +2,9 @@
 
 Efeito VST3 x64 para Windows, com reducao espectral por sidechain em 32 bandas,
 automacao de parametros, processamento L/R e M/S, freeze e interface redimensionavel.
+Na versao 0.2.0, o detector L/R vincula o maior pico por banda antes do envelope,
+Low-cut/High-cut filtram realmente o auxiliar antes da analise, e o ataque minimo
+e de 0,001 ms. As imagens e os onze IDs de automacao foram preservados.
 Usa as duas imagens aprovadas, preservadas em `Assets/normal.png` e `Assets/advanced.png`.
 
 **Uso no Studio One:** [guia de instalacao e roteamento](docs/Studio-One.md).

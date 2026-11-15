@@ -43,8 +43,8 @@ void SpectralEngine::reset() {
         for (auto& f : b.equaliser) { f = Biquad{}; }
         b.envelope.fill(0);
     }
-    for (auto& f : listenHP) f = Biquad{};
-    for (auto& f : listenLP) f = Biquad{};
+    for (auto& f : sidechainHP) f = Biquad{};
+    for (auto& f : sidechainLP) f = Biquad{};
     for (auto& v : reduction) v.store(0, std::memory_order_relaxed);
     for (auto& v : spectrum) v.store(-90, std::memory_order_relaxed);
     amount = mode = bypassMix = listenMix = 0;
@@ -56,11 +56,11 @@ void SpectralEngine::process(float* l, float* r, const float* scL,
     if (!l || count <= 0) return;
     const auto low = clamp(s.lowCut, 20, 20000), high = clamp(s.highCut, 20, 20000);
     if (oldLow != low || oldHigh != high) {
-        for (auto& f : listenHP) f.cutoff(2 * pi * std::min<double>(low, rate * .475) / rate, true);
-        for (auto& f : listenLP) f.cutoff(2 * pi * std::min<double>(high, rate * .475) / rate, false);
+        for (auto& f : sidechainHP) f.cutoff(2 * pi * std::min<double>(low, rate * .475) / rate, true);
+        for (auto& f : sidechainLP) f.cutoff(2 * pi * std::min<double>(high, rate * .475) / rate, false);
         oldLow = low; oldHigh = high;
     }
-    const auto attack = static_cast<float>(std::exp(-1.0 / (.001 * clamp(s.attackMs, .01f, 100) * rate)));
+    const auto attack = static_cast<float>(std::exp(-1.0 / (.001 * clamp(s.attackMs, .001f, 100) * rate)));
     const auto release = static_cast<float>(std::exp(-1.0 / (.001 * clamp(s.releaseMs, .01f, 1000) * rate)));
     const auto smooth = static_cast<float>(1 - std::exp(-1.0 / (.004 * rate)));
     const auto amountTarget = clamp(s.amount, 0, 100) * .01f;
@@ -69,8 +69,14 @@ void SpectralEngine::process(float* l, float* r, const float* scL,
     const auto rightWeight = pan < 0 ? 1 + pan : 1.0f;
     for (int n = 0; n < count; ++n) {
         const float dryL = clean(l[n]), dryR = r ? clean(r[n]) : dryL;
-        const float sourceL = scL ? clean(scL[n]) : 0;
-        const float sourceR = scR ? clean(scR[n]) : sourceL;
+        float sourceL = scL ? clean(scL[n]) : 0;
+        float sourceR = scR ? clean(scR[n]) : sourceL;
+        // Do not high-pass the main audio. The same filtered auxiliary signal
+        // feeds both the detector and the explicit sidechain-listen mode.
+        const auto hpL = sidechainHP[0].tick(sourceL), hpR = sidechainHP[1].tick(sourceR);
+        if (low > 20) { sourceL = hpL; sourceR = hpR; }
+        const auto lpL = sidechainLP[0].tick(sourceL), lpR = sidechainLP[1].tick(sourceR);
+        if (high < 20000) { sourceL = lpL; sourceR = lpR; }
         std::array<float, 4> source{sourceL, sourceR, (sourceL + sourceR) * .5f, (sourceL - sourceR) * .5f};
         std::array<float, 4> audio{dryL, dryR, (dryL + dryR) * .5f, (dryL - dryR) * .5f};
         amount += smooth * (amountTarget - amount);
@@ -78,16 +84,23 @@ void SpectralEngine::process(float* l, float* r, const float* scL,
         bypassMix += smooth * ((s.bypass ? 1.0f : 0.0f) - bypassMix);
         listenMix += smooth * ((s.listen ? 1.0f : 0.0f) - listenMix);
         const bool update = coefficientCountdown-- <= 0;
-        if (update) coefficientCountdown = 15;
+        if (update) coefficientCountdown = 3;
         std::array<float, 4> peakLevel{};
         if (update) for (const auto& band : bands) if (band.active)
             for (size_t c = 0; c < 4; ++c) peakLevel[c] = std::max(peakLevel[c], band.envelope[c]);
         peakLevel[0] = peakLevel[1] = std::max(peakLevel[0], peakLevel[1]);
         for (int i = 0; i < bandCount; ++i) {
             auto& b = bands[static_cast<size_t>(i)];
+            // Preserve signed L/R through the band filters. Rectifying before
+            // spectral analysis would introduce DC and harmonic distortion.
+            const float bandLeft = b.detector[0].tick(source[0]);
+            const float bandRight = b.detector[1].tick(source[1]);
+            const float detectorInput = std::max(std::abs(bandLeft), std::abs(bandRight));
+            const std::array<float, 4> detectedPeaks{detectorInput, detectorInput,
+                std::abs(b.detector[2].tick(source[2])), std::abs(b.detector[3].tick(source[3]))};
             for (int c = 0; c < 4; ++c) {
                 auto& e = b.envelope[static_cast<size_t>(c)];
-                const auto detected = std::abs(b.detector[static_cast<size_t>(c)].tick(source[static_cast<size_t>(c)]));
+                const auto detected = detectedPeaks[static_cast<size_t>(c)];
                 if (!s.freeze) e = detected + (detected > e ? attack : release) * (e - detected);
             }
             if (update) {
@@ -99,10 +112,11 @@ void SpectralEngine::process(float* l, float* r, const float* scL,
                 for (int c = 0; c < 4; ++c) {
                     const auto db = 20 * std::log10(std::max(env[static_cast<size_t>(c)], 1.0e-9f));
                     const auto peakDb = 20 * std::log10(std::max(peakLevel[static_cast<size_t>(c)], 1.0e-9f));
-                    const auto gate = std::clamp((peakDb + 72.0f) / 36.0f, 0.0f, 1.0f);
-                    const auto strength = std::clamp((db - peakDb + 24.0f) / 24.0f, 0.0f, 1.0f) * gate;
+                    const auto gate = std::clamp((peakDb + 84.0f) / 42.0f, 0.0f, 1.0f);
+                    const auto relative = std::clamp((db - peakDb + 24.0f) / 24.0f, 0.0f, 1.0f);
+                    const auto strength = relative * (2.0f - relative) * gate;
                     const auto weight = c % 2 == 0 ? leftWeight : rightWeight;
-                    const auto gain = enabled ? -30.0f * amount * strength * weight : 0;
+                    const auto gain = enabled ? -36.0f * amount * strength * weight : 0;
                     b.equaliser[static_cast<size_t>(c)].peak(b.omega, q, gain);
                     if ((s.midSide && c >= 2) || (!s.midSide && c < 2)) shownReduction = std::min(shownReduction, gain);
                 }
@@ -114,8 +128,8 @@ void SpectralEngine::process(float* l, float* r, const float* scL,
         const auto msL = audio[2] + audio[3], msR = audio[2] - audio[3];
         float wetL = audio[0] + mode * (msL - audio[0]);
         float wetR = audio[1] + mode * (msR - audio[1]);
-        const auto monitorL = listenLP[0].tick(listenHP[0].tick(sourceL));
-        const auto monitorR = listenLP[1].tick(listenHP[1].tick(sourceR));
+        const auto monitorL = sourceL;
+        const auto monitorR = sourceR;
         wetL += listenMix * ((low <= high ? monitorL : 0) - wetL);
         wetR += listenMix * ((low <= high ? monitorR : 0) - wetR);
         l[n] = clean(wetL + bypassMix * (dryL - wetL));

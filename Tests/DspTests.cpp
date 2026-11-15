@@ -102,6 +102,67 @@ int main() {
     run(engine, l, &r, &sc, &sc, s, 1);
     engine.reset(); run(engine, l2, &r2, &sc, &sc, s, 1024);
     check(l == l2 && r == r2, "Output invariant to host block size");
+    // Regression: a single hot channel must drive exactly the same linked
+    // reduction as two hot channels, including opposite polarity.
+    auto silence = std::vector<float>(n, 0);
+    auto referenceL = input, referenceR = input; s = {}; s.amount = 65;
+    engine.reset(); run(engine, referenceL, &referenceR, &input, &input, s);
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        engine.reset(); l = input; r = input;
+        const auto* leftSC = scenario == 1 ? &silence : &input;
+        const auto* rightSC = scenario == 0 ? &silence : scenario == 1 ? &input : &negative;
+        run(engine, l, &r, leftSC, rightSC, s);
+        check(l == referenceL && r == referenceR,
+            scenario == 0 ? "Left-only SC equals dual-channel peak detection" :
+            scenario == 1 ? "Right-only SC equals dual-channel peak detection" :
+                            "Anti-phase SC does not cancel in linked LR detector");
+    }
+    auto quadrature = input;
+    for (int i = 0; i < n; ++i) quadrature[static_cast<size_t>(i)] = .3f * static_cast<float>(std::cos(2 * pi * 1000 * i / 48000));
+    auto detectorDb = [&](const std::vector<float>& a, const std::vector<float>& b) {
+        engine.reset(); auto main = input;
+        trackspace::Settings settings; settings.amount = 0; settings.attackMs = settings.releaseMs = 10;
+        run(engine, main, nullptr, &a, &b, settings);
+        return engine.spectrum[18].load();
+    };
+    const auto individualPeakDb = std::max(detectorDb(input, silence), detectorDb(silence, quadrature));
+    check(detectorDb(input, quadrature) > individualPeakDb + 2,
+        "Quadrature peaks link before smoothing, rather than max of independently smoothed channels");
+    // Observe detector spectrum directly: an output-band mask alone cannot
+    // pass this check if the HPF is only wired to the monitor path.
+    auto bass = tone(n, 60, 48000); s = {}; s.amount = 0;
+    engine.reset(); l = bass; r = bass; run(engine, l, &r, &bass, &bass, s);
+    const auto rawBassDb = engine.spectrum[5].load();
+    engine.reset(); l = bass; r = bass; s.lowCut = 1000;
+    run(engine, l, &r, &bass, &bass, s);
+    check(engine.spectrum[5].load() < rawBassDb - 35, "SC HPF suppresses 60 Hz inside the detector by over 35 dB");
+    check(l == bass && r == bass, "SC HPF does not high-pass the main audio");
+    auto treble = tone(n, 10000, 48000); s = {}; s.amount = 0;
+    engine.reset(); l = treble; r = treble; run(engine, l, &r, &treble, &treble, s);
+    const auto rawTrebleDb = engine.spectrum[28].load();
+    engine.reset(); l = treble; r = treble; s.highCut = 1000;
+    run(engine, l, &r, &treble, &treble, s);
+    check(engine.spectrum[28].load() < rawTrebleDb - 35, "SC LPF actually filters the detector input");
+    check(l == treble && r == treble, "SC LPF does not low-pass the main audio");
+    auto quietSC = input; for (auto& sample : quietSC) sample *= .0004f;
+    engine.reset(); l = input; r = input; s = {};
+    run(engine, l, &r, &quietSC, &quietSC, s);
+    float quietReduction = 0;
+    for (auto& band : engine.reduction) quietReduction = std::max(quietReduction, -band.load());
+    check(quietReduction > 1, "Quiet sidechain peaks below -72 dBFS trigger measurable reduction");
+    auto transientReduction = [&](float attackTime) {
+        trackspace::SpectralEngine test;
+        trackspace::Settings settings; settings.amount = 100; settings.attackMs = attackTime;
+        auto warm = std::vector<float>(4096, 0); run(test, warm, nullptr, nullptr, nullptr, settings);
+        auto burst = tone(24, 4000, 48000), main = burst;
+        run(test, main, nullptr, &burst, nullptr, settings);
+        float peak = 0; for (auto& band : test.reduction) peak = std::max(peak, -band.load());
+        return peak;
+    };
+    const auto fastTransient = transientReduction(.001f), slowTransient = transientReduction(100);
+    std::cout << "Transient reduction after 0.5 ms: fast=" << fastTransient << " dB slow=" << slowTransient << " dB\n";
+    check(fastTransient > 6 && fastTransient > slowTransient + 10,
+        "Fast attack catches the first 0.5 ms of a transient more firmly than slow attack");
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

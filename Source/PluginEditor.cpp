@@ -55,10 +55,10 @@ TrackspaceEditor::TrackspaceEditor(TrackspaceProcessor& p) : AudioProcessorEdito
         sliderAttachments.push_back(std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.parameters, id, control));
     };
     knob(amount, "amount", "Amount: intensidade da reducao. Arraste; Shift para ajuste fino; duplo clique restaura.");
-    knob(low, "lowCut", "Limite inferior da faixa de reducao (20 Hz a 20 kHz).");
+    knob(low, "lowCut", "Limite inferior e HPF do detector de sidechain (20 Hz a 20 kHz).");
     knob(high, "highCut", "Limite superior da faixa de reducao (20 Hz a 20 kHz).");
     knob(pan, "pan", "Balanco: L/R ou Mid/Side. Centro processa ambos; extremos preservam o outro canal.");
-    knob(attack, "attack", "Attack: resposta do detector (0.01 a 100 ms).");
+    knob(attack, "attack", "Attack: resposta do detector (0.001 a 100 ms).");
     knob(release, "release", "Release: recuperacao do detector (0.01 a 1000 ms).");
     pan.small = attack.small = release.small = true;
     freeze.freezeStyle = true;

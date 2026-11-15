@@ -28,12 +28,12 @@ O envio MIDI para controladores fisicos e gerenciado pelo Control Link da DAW.
 | Controle | Funcao |
 |---|---|
 | Amount | Intensidade de reducao, 0–100%; 0% preserva o sinal |
-| Low-cut / High-cut | Regiao onde a reducao atua, 20 Hz–20 kHz |
+| Low-cut / High-cut | Regiao de reducao e HPF/LPF de 12 dB/oitava no sinal auxiliar antes do detector; 20 Hz–20 kHz |
 | Freeze | Mantem o espectro aprendido; desligue para acompanhar novamente |
 | Pequeno circulo azul do visor | Alterna entre painel normal e avancado |
 | Pan | Balanco de processamento: esquerda/direita ou mid/side |
 | L/R / M/S | Stereo com detector vinculado ou processamento Mid/Side |
-| Attack / Release | Resposta do detector: 0,01–100 ms / 0,01–1000 ms |
+| Attack / Release | Resposta do detector: 0,001–100 ms / 0,01–1000 ms; ataque padrao 2 ms |
 | Sidechain no painel avancado | Escuta do sinal auxiliar dentro da faixa selecionada |
 | Logo inferior | Menu de tamanhos, bypass e escuta Delta (sinal removido) |
 | Canto inferior direito | Arraste para redimensionar de 360 a 800 pixels logicos |
@@ -47,6 +47,16 @@ Sem sidechain conectado, o audio principal passa sem reducao. Sidechain conectad
 sem sinal faz a reducao desaparecer conforme Release. Freeze pode manter uma curva
 mesmo sem sinal. Low-cut maior que High-cut deixa a faixa de processamento vazia.
 Os filtros acima do limite de Nyquist da taxa de amostragem ficam desativados.
+
+Na versao 0.2.0, o barramento auxiliar e habilitado por padrao. Em L/R, o detector
+usa `max(abs(L), abs(R))` por banda antes de suavizar o envelope: sinal em apenas
+um canal ou em oposicao de fase nao e atenuado pela media entre canais.
+O HPF/LPF processa somente o auxiliar; nao filtra o audio principal. Nos extremos
+20 Hz/20 kHz, o filtro auxiliar correspondente e ignorado. A curva de reducao
+foi reforcada, com teto por banda de 36 dB e atualizacao a cada 4 amostras.
+Ataque e Release sao tempos do detector, nao uma garantia de latencia de captura:
+os passa-faixas espectrais tambem possuem seus proprios tempos de resposta.
+Essa revisao pode reduzir mais que a versao 0.1.0 com o mesmo Amount.
 
 ## Estado desta implementacao
 
