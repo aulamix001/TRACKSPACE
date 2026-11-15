@@ -1,4 +1,5 @@
 #include "SpectralEngine.h"
+#include "RealtimeSafety.h"
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -149,7 +150,8 @@ int main() {
     run(engine, l, &r, &quietSC, &quietSC, s);
     float quietReduction = 0;
     for (auto& band : engine.reduction) quietReduction = std::max(quietReduction, -band.load());
-    check(quietReduction > 1, "Quiet sidechain peaks below -72 dBFS trigger measurable reduction");
+    check(quietReduction > .005f && quietReduction < .1f,
+        "Quiet sidechain produces proportional subtle reduction rather than a normalized deep cut");
     auto transientReduction = [&](float attackTime) {
         trackspace::SpectralEngine test;
         trackspace::Settings settings; settings.amount = 100; settings.attackMs = attackTime;
@@ -161,8 +163,75 @@ int main() {
     };
     const auto fastTransient = transientReduction(.001f), slowTransient = transientReduction(100);
     std::cout << "Transient reduction after 0.5 ms: fast=" << fastTransient << " dB slow=" << slowTransient << " dB\n";
-    check(fastTransient > 6 && fastTransient > slowTransient + 10,
+    check(fastTransient > 6 && slowTransient < 1 && fastTransient > slowTransient * 10,
         "Fast attack catches the first 0.5 ms of a transient more firmly than slow attack");
+    // The actual attenuation must track signal LEVEL, not just its normalized shape.
+    auto attenuation = [&](float sidechainLevel, float amountValue) {
+        auto source = input; for (auto& x : source) x *= sidechainLevel;
+        engine.reset(); auto main = input; trackspace::Settings settings; settings.amount = amountValue;
+        run(engine, main, nullptr, &source, nullptr, settings);
+        return energy(main, n / 2) / energy(input, n / 2);
+    };
+    const auto weak = attenuation(.01f, 50), medium = attenuation(.1f, 50), strong = attenuation(1, 50);
+    check(weak > medium && medium > strong && medium > strong * 2,
+        "Same spectrum at increasing SC amplitude produces increasing attenuation");
+    check(attenuation(1, 25) > attenuation(1, 75), "Amount scales spectral reduction depth monotonically");
+    // Mono external voice can control Side-only; the centre must remain intact.
+    engine.reset(); l = input; r = negative; s = {}; s.amount = 100; s.midSide = true; s.pan = 1;
+    run(engine, l, &r, &input, nullptr, s);
+    check(energy(l, n / 2) < .04, "Mono sidechain can attenuate Side-only stereo material");
+    engine.reset(); l = input; r = input;
+    run(engine, l, &r, &input, nullptr, s);
+    check(energy(l, n / 2) > .20, "Side-only ducking preserves Mid with a mono auxiliary");
+    // Independent tones let us null the unprocessed M/S component.
+    const auto sideTone = tone(n, 2700, 48000);
+    auto testMatrix = [&](float balance, bool preserveMid) {
+        engine.reset(); std::vector<float> a(n), b(n);
+        for (int i = 0; i < n; ++i) { a[i] = input[i] + sideTone[i]; b[i] = input[i] - sideTone[i]; }
+        auto settings = s; settings.pan = balance;
+        run(engine, a, &b, &input, nullptr, settings);
+        float error = 0;
+        for (int i = n / 2; i < n; ++i) {
+            const auto recovered = preserveMid ? (a[i] + b[i]) * .5f : (a[i] - b[i]) * .5f;
+            error = std::max(error, std::abs(recovered - (preserveMid ? input[i] : sideTone[i])));
+        }
+        return error;
+    };
+    check(testMatrix(1, true) < 1.e-5f, "Side-only processing nulls unchanged Mid in a mixed stereo signal");
+    check(testMatrix(-1, false) < 1.e-5f, "Mid-only processing nulls unchanged Side in a mixed stereo signal");
+    // The region mask must settle to zero gain for every excluded centre band.
+    engine.reset(); l = input; r = input; s = {}; s.lowCut = 500; s.highCut = 2000;
+    run(engine, l, &r, &input, nullptr, s);
+    bool excludedUnity = true;
+    for (int i = 0; i < trackspace::bandCount; ++i)
+        if (engine.frequency(i) < 500 || engine.frequency(i) > 2000)
+            excludedUnity &= engine.reduction[i].load() == 0;
+    check(excludedUnity, "All excluded band gains are exactly zero dB after cutoff ramps settle");
+    // Time-domain transitions on DC expose a one-sample gain step directly.
+    engine.reset(); s = {}; s.amount = 100; s.attackMs = .001f;
+    std::vector<float> dc(n, .2f), dcRight = dc;
+    auto sweepSource = input;
+    run(engine, dc, &dcRight, &sweepSource, nullptr, s);
+    std::fill(dc.begin(), dc.end(), .2f); std::fill(dcRight.begin(), dcRight.end(), .2f);
+    s.lowCut = 4000; s.pan = 1; s.midSide = true;
+    run(engine, dc, &dcRight, &sweepSource, nullptr, s);
+    float biggestStep = std::abs(dc[0] - .2f);
+    for (int i = 1; i < n; ++i) biggestStep = std::max(biggestStep, std::abs(dc[i] - dc[i - 1]));
+    check(biggestStep < .01f, "Combined cutoff, Pan and mode automation does not introduce a DC gain click");
+    // Restore exact dry samples after release, including when M/S stays active.
+    engine.reset(); l = input; r = negative; s = {}; s.amount = 100; s.midSide = true; s.releaseMs = 10;
+    run(engine, l, &r, &input, nullptr, s);
+    l = input; r = negative; run(engine, l, &r, nullptr, nullptr, s);
+    check(std::equal(l.begin() + n * 3 / 4, l.end(), input.begin() + n * 3 / 4)
+        && std::equal(r.begin() + n * 3 / 4, r.end(), negative.begin() + n * 3 / 4),
+        "Release restores bit-exact dry stereo samples with no persistent M/S coloration");
+    engine.reset(); l = input; r = input; s = {};
+    heapProbe::allocations.store(0); heapProbe::active = true;
+    engine.process(l.data(), r.data(), input.data(), nullptr, n, s);
+    s.lowCut = 1000; s.midSide = true; s.pan = 1;
+    engine.process(l.data(), r.data(), input.data(), nullptr, n, s);
+    heapProbe::active = false;
+    check(heapProbe::allocations.load() == 0, "Audio processing and live parameter changes allocate zero heap memory");
     std::cout << checks << " checks, " << failures << " failures\n";
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

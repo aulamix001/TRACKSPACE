@@ -12,7 +12,10 @@ try {
     $bundle = 'build-windows/Trackspace_artefacts/Release/VST3/TRACKSPACE.vst3'
     Copy-Item -Recurse -Force $bundle 'dist/'
     Copy-Item 'docs/Studio-One.md' 'dist/LEIA-ME.md'
+    Copy-Item 'docs/DSP.md' 'dist/DSP.md'
+    Copy-Item 'docs/VALIDATION.md' 'dist/VALIDACAO.md'
+    Copy-Item 'build-windows/Testing/Temporary/LastTest.log' 'dist/TESTES.txt'
     Copy-Item -Recurse -Force 'ThirdParty' 'dist/'
-    Compress-Archive -Path 'dist/TRACKSPACE.vst3', 'dist/LEIA-ME.md', 'dist/ThirdParty' -DestinationPath 'dist/TRACKSPACE-Windows-x64.zip' -Force
+    Compress-Archive -Path 'dist/TRACKSPACE.vst3', 'dist/LEIA-ME.md', 'dist/DSP.md', 'dist/VALIDACAO.md', 'dist/TESTES.txt', 'dist/ThirdParty' -DestinationPath 'dist/TRACKSPACE-Windows-x64.zip' -Force
     Write-Host 'Pronto: dist/TRACKSPACE-Windows-x64.zip'
 } finally { Pop-Location }

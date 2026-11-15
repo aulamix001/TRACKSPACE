@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include "RealtimeSafety.h"
 #include <iostream>
 
 int main(int argc, char** argv) {
@@ -30,7 +32,10 @@ int main(int argc, char** argv) {
         buffer.setSample(3, n, .37f * std::sin(n * .19f));
     }
     juce::AudioBuffer<float> auxiliaryCopy(buffer);
+    heapProbe::allocations.store(0); heapProbe::active = true;
     p.processBlock(buffer, midi);
+    heapProbe::active = false;
+    check(heapProbe::allocations.load() == 0, "processBlock with stereo auxiliary allocates no heap memory");
     check(buffer.getMagnitude(0, 0, 1025) == 0 && buffer.getMagnitude(1, 0, 1025) == 0,
         "Auxiliary channels do not leak into silent main output across 256-sample chunks");
     check(std::equal(buffer.getReadPointer(2), buffer.getReadPointer(2) + 1025, auxiliaryCopy.getReadPointer(2))
@@ -71,6 +76,14 @@ int main(int argc, char** argv) {
     check(slider && std::abs(p.parameters.getRawParameterValue("amount")->load() - 61) < .01f, "Image knob controls automatable audio parameter");
     editor->setSize(420, 420);
     check(p.editorSize.load() == 420, "Resizing persisted");
+    check(TrackspaceEditor::formatFrequency(20) == "20 Hz"
+        && TrackspaceEditor::formatFrequency(120) == "120 Hz"
+        && TrackspaceEditor::formatFrequency(999) == "999 Hz"
+        && TrackspaceEditor::formatFrequency(1000) == "1.0 kHz"
+        && TrackspaceEditor::formatFrequency(1200) == "1.2 kHz"
+        && TrackspaceEditor::formatFrequency(5400) == "5.4 kHz"
+        && TrackspaceEditor::formatFrequency(20000) == "20.0 kHz",
+        "Frequency readouts format Hz/kHz correctly at the 1000 Hz boundary");
     auto screenshot = [&](const juce::String& name) {
         juce::Image image(juce::Image::RGB, editor->getWidth(), editor->getHeight(), true);
         juce::Graphics graphics(image); editor->paintEntireComponent(graphics, true);
@@ -80,8 +93,37 @@ int main(int argc, char** argv) {
             auto stream = folder.getChildFile(name).createOutputStream();
             if (stream) { stream->setPosition(0); stream->truncate(); juce::PNGImageFormat{}.writeImageToStream(image, *stream); }
         }
+        return image;
     };
-    screenshot("normal.png");
+    const auto initialImage = screenshot("normal.png");
+    auto* lowKnob = dynamic_cast<juce::Slider*>(editor->findChildWithID("lowCut"));
+    auto* highKnob = dynamic_cast<juce::Slider*>(editor->findChildWithID("highCut"));
+    if (lowKnob) lowKnob->setValue(1200, juce::sendNotificationSync);
+    if (highKnob) highKnob->setValue(5400, juce::sendNotificationSync);
+    const auto knobImage = screenshot("frequencies.png");
+    auto cornerChanged = [&](const juce::Image& before, const juce::Image& after, bool right) {
+        const auto scale = editor->getWidth() / 1254.0f;
+        const auto region = juce::Rectangle<float>(right ? 877.0f : 151.0f, 142, 225, 42) * scale;
+        const auto pixels = region.toNearestInt();
+        for (int y = pixels.getY(); y < pixels.getBottom(); ++y)
+            for (int x = pixels.getX(); x < pixels.getRight(); ++x)
+                if (before.getPixelAt(x, y) != after.getPixelAt(x, y)) return true;
+        return false;
+    };
+    check(lowKnob && highKnob && std::abs(p.parameters.getRawParameterValue("lowCut")->load() - 1200) < .1f
+        && std::abs(p.parameters.getRawParameterValue("highCut")->load() - 5400) < .1f
+        && cornerChanged(initialImage, knobImage, false) && cornerChanged(initialImage, knobImage, true),
+        "Turning mapped cutoff knobs updates both numeric corners of the rendered display");
+    for (const auto& change : {std::pair<const char*, float>{"lowCut", 2000}, {"highCut", 8000}}) {
+        auto* parameter = p.parameters.getParameter(change.first);
+        parameter->setValueNotifyingHost(parameter->convertTo0to1(change.second));
+    }
+    const auto automatedImage = screenshot("automated.png");
+    check(cornerChanged(knobImage, automatedImage, false) && cornerChanged(knobImage, automatedImage, true),
+        "DAW automation updates the frequency readouts without a knob gesture");
+    editor->setSize(360, 360); screenshot("compact.png");
+    editor->setSize(800, 800); screenshot("large.png");
+    editor->setSize(420, 420);
     auto* toggle = dynamic_cast<juce::TextButton*>(editor->findChildWithID("panelToggle"));
     if (toggle && toggle->onClick) toggle->onClick();
     check(toggle && p.advancedPanel.load(), "Blue indicator toggles advanced panel");

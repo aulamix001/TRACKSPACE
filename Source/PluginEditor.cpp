@@ -107,32 +107,63 @@ void TrackspaceEditor::resized() {
     place(menuButton, 571, 1037, 108, 108);
     processor.editorSize.store(getWidth());
 }
+juce::String TrackspaceEditor::formatFrequency(float frequency) {
+    return frequency < 1000 ? juce::String(juce::roundToInt(frequency)) + " Hz"
+                            : juce::String(frequency / 1000.0f, 1) + " kHz";
+}
 void TrackspaceEditor::paint(juce::Graphics& g) {
     g.drawImage(showingAdvanced ? advanced : normal, getLocalBounds().toFloat());
-    g.addTransform(juce::AffineTransform::scale(getWidth() / designSize));
+    const auto scale = getWidth() / designSize;
+    g.addTransform(juce::AffineTransform::scale(scale));
+    // Read the automatable values directly: DAW automation and knob gestures
+    // update these same atomics. The existing 30 Hz timer schedules repaints.
+    const auto lowHz = processor.parameters.getRawParameterValue("lowCut")->load(std::memory_order_relaxed);
+    const auto highHz = processor.parameters.getRawParameterValue("highCut")->load(std::memory_order_relaxed);
     if (!showingAdvanced) {
         const juce::Rectangle<float> graph{123, 145, 1007, 270};
         juce::Graphics::ScopedSaveState saved(g); g.reduceClipRegion(graph.toNearestInt());
         g.setGradientFill(juce::ColourGradient(juce::Colour(0xff1a1b1c), 0, 145, juce::Colour(0xff141617), 0, 415, false));
         g.fillRect(graph);
-        g.setColour(juce::Colours::white.withAlpha(.45f)); g.drawLine(123, 306, 1130, 306, 1.5f);
+        auto frequencyX = [](float hz) { return 123 + std::log(hz / 20.0f) / std::log(1000.0f) * 1007; };
+        const auto lowX = frequencyX(lowHz), highX = frequencyX(highHz);
+        g.setColour(juce::Colour(0xffb9cedf).withAlpha(.13f));
+        if (lowHz > highHz) g.fillRect(graph);
+        else {
+            g.fillRect(juce::Rectangle<float>{graph.getX(), graph.getY(), lowX - graph.getX(), graph.getHeight()});
+            g.fillRect(juce::Rectangle<float>{highX, graph.getY(), graph.getRight() - highX, graph.getHeight()});
+        }
+        g.setColour(blue.withAlpha(.45f));
+        g.drawVerticalLine(juce::roundToInt(lowX), graph.getY(), graph.getBottom());
+        g.drawVerticalLine(juce::roundToInt(highX), graph.getY(), graph.getBottom());
+        g.setColour(juce::Colours::white.withAlpha(.4f)); g.drawLine(123, 306, 1130, 306, 1.0f / scale);
         juce::Path reduction, spectrum;
         for (int i = 0; i < trackspace::bandCount; ++i) {
             const auto x = 123 + static_cast<float>(std::log(processor.engine.frequency(i) / 20) / std::log(1000.0)) * 1007;
             const auto db = processor.engine.reduction[static_cast<size_t>(i)].load(std::memory_order_relaxed);
             const auto level = processor.engine.spectrum[static_cast<size_t>(i)].load(std::memory_order_relaxed);
             const auto y = 306 - db * 3;
-            const auto sy = juce::jlimit(155.0f, 402.0f, 160 - level * 2.7f);
+            const auto sy = juce::jlimit(200.0f, 402.0f, 160 - level * 2.7f);
             if (i == 0) { reduction.startNewSubPath(x, y); spectrum.startNewSubPath(x, sy); }
             else { reduction.lineTo(x, y); spectrum.lineTo(x, sy); }
         }
-        g.setColour(blue.withAlpha(.5f)); g.strokePath(spectrum, juce::PathStrokeType(2));
-        g.setColour(blue); g.strokePath(reduction, juce::PathStrokeType(2.5f));
+        // Compensate the design-space transform: these remain 2 / 2.5 logical
+        // pixels wide even when the square plugin window is resized.
+        g.setColour(blue.withAlpha(.7f));
+        g.strokePath(spectrum, juce::PathStrokeType(2.0f / scale, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(blue);
+        g.strokePath(reduction, juce::PathStrokeType(2.5f / scale, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         if (!processor.sidechainConnected.load()) {
             g.setColour(blue.withAlpha(.7f)); g.setFont(19);
             g.drawText("Ative o sidechain na DAW", 160, 365, 650, 30, juce::Justification::left);
         }
     }
+    // Paint after the curves so peaks never obscure either numeric readout.
+    g.setColour(juce::Colour(0xff151719).withAlpha(.96f));
+    g.fillRoundedRectangle(140, 141, 245, 44, 7);
+    g.fillRoundedRectangle(868, 141, 245, 44, 7);
+    g.setColour(juce::Colour(0xffeaf4ff)); g.setFont(juce::Font(11.5f / scale));
+    g.drawText(formatFrequency(lowHz), 151, 142, 225, 42, juce::Justification::centredLeft);
+    g.drawText(formatFrequency(highHz), 877, 142, 225, 42, juce::Justification::centredRight);
 }
 void TrackspaceEditor::timerCallback() {
     if (processor.advancedPanel.load() != showingAdvanced) updatePanel();

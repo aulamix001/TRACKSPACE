@@ -1,9 +1,8 @@
-# Validacao executada
+# Validacao executada — TRACKSPACE 0.3.0
 
-Build: TRACKSPACE 0.2.0, Windows x64 VST3, JUCE 7.0.12
-(`4f43011b96eb0636104cb3e433894cda98243626`).
-Compilacao cruzada com GCC/MinGW-w64 14-posix, Release, runtimes estaticos.
-Os testes Windows foram executados em Wine 10 / Xvfb sobre Linux, nao no Studio One.
+Windows x64 VST3, JUCE 7.0.12 (`4f43011b96eb0636104cb3e433894cda98243626`),
+GCC/MinGW-w64 14-posix Release, runtimes estaticos. Executado em Wine 10/Xvfb
+sobre Linux. O Studio One Windows ainda nao foi testado diretamente.
 
 ## Resultados
 
@@ -11,38 +10,35 @@ Os testes Windows foram executados em Wine 10 / Xvfb sobre Linux, nao no Studio 
 
 | Suite | Evidencia |
 |---|---|
-| `spectral_audio_tests` | 46 verificacoes: ausencia de sidechain, Amount zero, frequencias coincidentes/distantes, regiao dos filtros, L/R, M/S, Freeze, Release, Bypass, escuta do sidechain, faixa invertida, valores nao finitos e independencia do tamanho do buffer |
-| `host_processor_tests` | 22 verificacoes: buses auxiliares, processamento via entrada auxiliar, 11 parametros publicados, estado de automacao, tamanho e painel salvos, mono, estado invalido, renderizacao e interacao com o controle Amount e alternancia de painel |
-| `vst3_binary_load_and_audio` | Abriu o arquivo VST3 Windows com LoadLibrary, chamou InitDll/GetPluginFactory, instanciou IComponent/IAudioProcessor, negociou buses stereo, processou 400 blocos de 512 amostras, verificou saidas finitas, reducao com sidechain, latencia declarada e encerramento |
+| `spectral_audio_tests` | 56 verificacoes: transparencia, Amount zero, seletividade, bandas excluidas, L/R, Mid/Side, Freeze, Release, Bypass, monitoracao, valores extremos, independencia do buffer, sensibilidade ao nivel real, Side-only com auxiliar mono, ausencia de click em automacao e ausencia de alocacoes |
+| `host_processor_tests` | 30 verificacoes: buses, auxiliar sem vazamento e somente leitura, zero alocacoes no callback, parametros, estado, mono, janela, formatacao Hz/kHz, atualizacao dos dois cantos por knobs e por automacao, renderizacao de ambos os paineis e tamanhos 360/420/800 |
+| `vst3_binary_load_and_audio` | Carregou o VST3 real, instanciou factory/component/processor, confirmou auxiliar kAux/kDefaultActive, negociou buses stereo, processou 400 blocos de 512 amostras e verificou sidechain so em L, so em R e em oposicao de fase |
 
-O motor tambem passou nas 46 verificacoes compilado nativamente em Linux.
-Os 22 testes de integracao do processador foram executados no binario Windows.
-O artefato Windows entregue utiliza JUCE 7.0.12.
+O motor tambem passou nas 56 verificacoes compilado nativamente em Linux.
+Taxas testadas: 44100, 48000, 96000 e 192000 Hz. Foram usados buffers de
+1, 127, 257, 512, 1024 e 1025 amostras, alem de uma leitura de burst de 24 amostras.
+A recuperacao de silencio do auxiliar foi verificada por comparacao bit a bit
+com o sinal seco, incluindo stereo M/S. A ausencia de alocacoes foi medida
+interceptando `new/new[]`, comuns e alinhados, no thread do processamento.
 
-As quatro taxas testadas no motor foram 44100, 48000, 96000 e 192000 Hz.
-Buffers de 1, 127, 257, 512, 1024 e 1025 amostras foram usados conforme o teste.
+## Auditoria e controle negativo
 
-Os hashes SHA-256 dos dois arquivos de imagem originais coincidem com os
-respectivos arquivos incorporados no plugin. Nenhum original foi editado.
+O relatorio [DSP.md](DSP.md) descreve divergencias anteriores, equacoes,
+roteamento, suavizacao, comportamento dos limites e limites fisicos dos filtros.
 
-## Auditoria do detector e sidechain (0.2.0)
+Os novos testes tambem foram executados contra o motor 0.2.0 (commit `c08eda0`).
+Ele falhou em seis casos: profundidade proporcional em sinais baixos, resposta
+curta de ataque sob a nova lei de ganho, dependencias de nivel, Side-only com
+auxiliar mono, automacao combinada sem click em DC e recuperacao bit a bit.
+A 0.3.0 passou nos 56 casos. Os testes de parametros antigos continuam presentes;
+as expectativas de profundidade foram ajustadas explicitamente para a nova lei
+inversa de amplitude, em vez de conservar cortes normalizados profundos em sinais
+muito baixos.
 
-- Entrada auxiliar stereo habilitada por padrao e confirmada como `kAux` / `kDefaultActive` no arquivo VST3 carregado.
-- Buses lidos por `getBusBuffer(buffer, true, 1)`; processamento aplicado somente a `getBusBuffer(buffer, false, 0)`.
-- Picos L/R vinculados por `max(abs(L), abs(R))` apos os filtros espectrais e antes do envelope.
-- O teste com sinais em quadratura distingue esse vinculo do maximo de dois envelopes suavizados separadamente.
-- HPF/LPF de Low-cut/High-cut alimentam o detector e a escuta, sem filtrar o audio principal.
-- Testes comprovam auxiliar sem vazamento para a saida principal e sem modificacao de seus buffers de entrada em blocos de 1025 amostras.
-- Curva de intensidade mais firme, sensibilidade ampliada a picos abaixo de -72 dBFS e limite por banda de 36 dB.
-- Ataque minimo de 0,001 ms, padrao de 2 ms; coeficientes atualizados a cada 4 amostras.
-- Um burst de 4 kHz gerou alvo de reducao por banda de aproximadamente 36 dB com ataque minimo versus 11,31 dB com ataque de 100 ms, medido apos 0,5 ms. Esses valores sao do controle de ganho, nao uma promessa de atenuacao instantanea do audio.
-- A carga real do VST3 foi testada com sidechain so em L, so em R e em oposicao de fase; todos provocaram reducao.
-
-Controle negativo: os testes novos foram executados contra o motor anterior
-(commit `25421d1`), que falhou em quatro casos: vinculo antes da suavizacao,
-HPF no detector, LPF no detector e sensibilidade a sinais baixos.
-O codigo corrigido passou em todos os 46 casos. O DSP continua sendo um redutor
-espectral independente; nao foi adicionado um modelo fisico de compressor Vari-Mu.
+As renderizacoes do display foram inspecionadas nos paineis normal e avancado,
+com 20 Hz/20,0 kHz, 1,2/5,4 kHz e 2,0/8,0 kHz. A legibilidade foi conferida nas
+janelas de 360 e 800 pixels. Nenhuma das imagens originais foi editada; seus hashes
+coincidem com os arquivos incorporados no plugin.
 
 ## Reproducao da compilacao cruzada
 

@@ -24,6 +24,7 @@ public:
     ~TrackspaceEditor() override = default;
     void paint(juce::Graphics&) override;
     void resized() override;
+    static juce::String formatFrequency(float frequency);
 private:
     void timerCallback() override;
     void updatePanel();

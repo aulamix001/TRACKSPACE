@@ -48,15 +48,28 @@ sem sinal faz a reducao desaparecer conforme Release. Freeze pode manter uma cur
 mesmo sem sinal. Low-cut maior que High-cut deixa a faixa de processamento vazia.
 Os filtros acima do limite de Nyquist da taxa de amostragem ficam desativados.
 
-Na versao 0.2.0, o barramento auxiliar e habilitado por padrao. Em L/R, o detector
-usa `max(abs(L), abs(R))` por banda antes de suavizar o envelope: sinal em apenas
-um canal ou em oposicao de fase nao e atenuado pela media entre canais.
-O HPF/LPF processa somente o auxiliar; nao filtra o audio principal. Nos extremos
-20 Hz/20 kHz, o filtro auxiliar correspondente e ignorado. A curva de reducao
-foi reforcada, com teto por banda de 36 dB e atualizacao a cada 4 amostras.
-Ataque e Release sao tempos do detector, nao uma garantia de latencia de captura:
-os passa-faixas espectrais tambem possuem seus proprios tempos de resposta.
-Essa revisao pode reduzir mais que a versao 0.1.0 com o mesmo Amount.
+Na versao 0.3.0, o barramento auxiliar e habilitado por padrao. O detector
+usa `max(abs(L), abs(R))` por banda antes de suavizar o envelope. Esse mesmo
+espectro controla o processamento L/R ou M/S do principal: um auxiliar mono
+pode controlar Mid-only ou Side-only. Pan -100% seleciona L/Mid e +100% R/Side.
+
+O HPF/LPF processa somente o auxiliar. Nos extremos 20 Hz/20 kHz, o filtro
+auxiliar correspondente e ignorado. O nivel real de cada envelope determina a
+profundidade, escalada por Amount, com teto de 36 dB por banda. Bandas fora da
+faixa recebem alvo de 0 dB; os filtros possuem transicoes e saias naturais.
+Ganhos, limites e Pan sao suavizados, com interpolacao dos coeficientes entre
+atualizacoes a cada oito amostras. Ao terminar o Release, o plugin retorna ao
+caminho seco exato, exceto quando Freeze mantem intencionalmente a curva.
+
+Os cantos superiores do visor mostram os valores Low-cut/High-cut. Abaixo de
+1000 Hz usa-se Hz; a partir de 1000 Hz, kHz com uma casa decimal. As areas
+translucidas representam a regiao excluida pelos mesmos parametros. Os tracos
+possuem juntas/pontas arredondadas e 2/2,5 pixels de espessura, mesmo na janela
+compacta. Os valores respondem a knobs e automacao da DAW.
+
+Attack/Release, passa-faixas e rampas possuem tempos de resposta. Fase minima
+nao e fase zero durante a atenuacao. Esta revisao produz profundidades diferentes
+da 0.2.0; ajuste Amount ouvindo ao abrir sessoes anteriores.
 
 ## Estado desta implementacao
 
